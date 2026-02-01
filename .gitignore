@@ -1,0 +1,33 @@
+# Environment files
+.env
+
+# Python artifacts
+__pycache__/
+*.py[cod]
+*$py.class
+
+# Virtual environments
+venv/
+.venv/
+
+# Editor folders
+.vscode/
+
+# OS files
+.DS_Store
+
+# Generated audio/transcripts + folders
+/chunks/
+*.wav
+*.mp3
+*.flac
+*.txt
+*.srt
+*.vtt
+
+# Logs
+*.log
+
+# Large ASR models
+*.nemo
+parakeet-tdt-0.6b-v3/

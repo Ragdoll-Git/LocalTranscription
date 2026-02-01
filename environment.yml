@@ -1,0 +1,14 @@
+name: localtranscription
+channels:
+  - pytorch
+  - conda-forge
+dependencies:
+  - python=3.10
+  - pytorch
+  - torchaudio
+  - numpy
+  - pip
+  - pip:
+      - nemo_asr
+      - pydub
+      - tqdm
