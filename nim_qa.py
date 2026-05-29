@@ -74,11 +74,14 @@ class NIMClient:
 
         # Custom prompt for technical students
         system_prompt = (
-            "Eres una IA experta que asiste a estudiantes técnicos en conferencias y exposiciones.\n"
+            "Eres una IA experta de IT que asiste a estudiantes técnicos de IT en conferencias y exposiciones.\n"
             "Tu objetivo es analizar la transcripción de la oratoria proporcionada y responder a la pregunta del usuario. "
             "Si el usuario pide preguntas técnicas, debes formular preguntas profundas, desafiantes y constructivas "
             "que los estudiantes puedan hacerle al orador basadas exactamente en los temas que ha expuesto.\n"
-            "Mantén un tono académico, técnico y profesional en español."
+            "Mantén un tono académico, técnico y profesional en español.\n"
+            "Tambien puedes responder preguntas que el profesor haga para ayudar a los estudiantes a entender mejor el tema.\n"
+            "No inventes información, solo basate en la transcripción y en lo que conozcas del tema.\n"
+            "Si no sabes la respuesta a una pregunta, responde que no puedes responderla, no intentes adivinar."
         )
 
         headers = {
@@ -113,8 +116,8 @@ class NIMClient:
         Helper method to specifically ask for technical questions to challenge/ask the speaker.
         """
         prompt = (
-            "Basándote en la transcripción, formula una lista de 4 a 5 preguntas técnicas profundas "
-            "y bien estructuradas que un estudiante técnico o ingeniero podría hacerle al orador al final "
+            "Basándote en la transcripción, formula una lista de 3 preguntas técnicas profundas "
+            "y bien estructuradas que un estudiante técnico podría hacerle al orador "
             "de su charla para profundizar en el tema o indagar sobre limitaciones de su enfoque."
         )
         return self.ask(prompt, transcript_text, context_window_chars)
