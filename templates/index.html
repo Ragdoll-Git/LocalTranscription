@@ -1,0 +1,127 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Transcripción Local y Análisis NIM</title>
+    <!-- Google Fonts Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&display=swap" rel="stylesheet">
+    <link rel="stylesheet" href="/static/style.css">
+    <!-- Socket.IO client -->
+    <script src="https://cdn.socket.io/4.7.2/socket.io.min.js"></script>
+</head>
+<body>
+    <header class="app-header">
+        <div class="logo">
+            <h1>LocalTranscription <span>v2.0</span></h1>
+        </div>
+        <div class="status-bar">
+            <span id="model-status" class="status-badge loading">Cargando Modelo ASR...</span>
+        </div>
+    </header>
+
+    <main class="app-layout">
+        <!-- Sidebar controls -->
+        <section class="sidebar">
+            <!-- Recording settings -->
+            <div class="card">
+                <h2>Grabar y Transcribir</h2>
+                <div class="form-group">
+                    <label for="output-dir">Carpeta de Guardado</label>
+                    <input type="text" id="output-dir" placeholder="C:\ruta\a\carpeta">
+                </div>
+                <div class="form-group">
+                    <label for="file-name">Nombre de Archivo</label>
+                    <input type="text" id="file-name" value="grabacion_clase.wav">
+                </div>
+                <div class="control-buttons">
+                    <button id="btn-start" class="btn btn-primary" disabled>Iniciar Grabación</button>
+                    <button id="btn-stop" class="btn btn-danger" disabled>Detener</button>
+                </div>
+            </div>
+
+            <!-- Microphones list -->
+            <div class="card">
+                <h2>Micrófonos Disponibles</h2>
+                <p class="subtitle">Selecciona los micrófonos a mezclar</p>
+                <div id="mics-container" class="mics-list">
+                    <!-- Mic check-list will load here -->
+                    <div class="loading-placeholder">Buscando dispositivos...</div>
+                </div>
+            </div>
+
+            <!-- NIM Configurations -->
+            <div class="card">
+                <h2>Ajustes de NVIDIA NIM</h2>
+                <div class="form-group">
+                    <label for="nim-api-key">NVIDIA NIM API Key</label>
+                    <input type="password" id="nim-api-key" placeholder="nvapi-...">
+                </div>
+                <div class="form-group">
+                    <label for="nim-model">Modelo NIM</label>
+                    <input type="text" id="nim-model" value="meta/llama-3.3-70b-instruct">
+                </div>
+                <div class="form-row">
+                    <div class="form-group">
+                        <label for="nim-temp">Temp</label>
+                        <input type="number" id="nim-temp" value="0.5" min="0" max="2" step="0.1">
+                    </div>
+                    <div class="form-group">
+                        <label for="nim-rpm">RPM Max</label>
+                        <input type="number" id="nim-rpm" value="15" min="1" max="120">
+                    </div>
+                </div>
+                <div class="form-group">
+                    <label for="nim-context">Ventana Contexto (tokens)</label>
+                    <input type="number" id="nim-context" value="2048" min="512" max="16384" step="512">
+                </div>
+                <div class="form-group">
+                    <label for="hf-token">Hugging Face Token (Diarización)</label>
+                    <input type="password" id="hf-token" placeholder="hf_...">
+                </div>
+                <button id="btn-save-settings" class="btn btn-secondary">Guardar Ajustes</button>
+            </div>
+        </section>
+
+        <!-- Main Workspace: Transcripts and Q&A -->
+        <section class="workspace">
+            <!-- Transcript Box -->
+            <div class="card transcript-card">
+                <div class="card-header">
+                    <h2>Transcripción en Tiempo Real</h2>
+                    <span id="recording-indicator" class="indicator">● Inactivo</span>
+                </div>
+                <div id="transcript-display" class="transcript-display">
+                    <p class="placeholder-text">Los fragmentos de transcripción aparecerán aquí cuando inicies la grabación.</p>
+                </div>
+            </div>
+
+            <!-- Q&A & Suggested Questions -->
+            <div class="card qa-card">
+                <div class="card-header">
+                    <h2>Análisis de Oratoria e Inteligencia</h2>
+                    <button id="btn-suggest" class="btn btn-action" disabled>Generar Preguntas Técnicas</button>
+                </div>
+                
+                <div class="qa-container">
+                    <div id="qa-history" class="qa-history">
+                        <p class="placeholder-text">Haz preguntas técnicas profundas basadas en la conferencia. La IA usará el fragmento contextualizado de la charla para responderte.</p>
+                    </div>
+                    <div class="qa-input-area">
+                        <input type="text" id="qa-input" placeholder="Haz una pregunta técnica sobre la exposición..." disabled>
+                        <button id="btn-ask" class="btn btn-primary" disabled>Preguntar</button>
+                    </div>
+                </div>
+            </div>
+        </section>
+    </main>
+
+    <footer class="app-footer">
+        <p>Procesamiento de audio local a 16kHz | NVIDIA Parakeet TDT 0.6B | Silero VAD | PyAnnote Speaker Diarization</p>
+    </footer>
+
+    <script src="/static/app.js"></script>
+</body>
+</html>

@@ -61,19 +61,9 @@ def spinner_task(event):
 spinner_thread = Thread(target=spinner_task, args=(spinner_event,))
 spinner_thread.start()
 
-# redirect stdout/stderr if verbose is off
-stdout_ctx = redirect_stdout(sys.stdout) if args.verbose else redirect_stdout(open(os.devnull, "w"))
-stderr_ctx = redirect_stderr(sys.stderr) if args.verbose else redirect_stderr(open(os.devnull, "w"))
-
-with stdout_ctx, stderr_ctx:
-    asr_model = nemo_asr.models.ASRModel.restore_from(
-        restore_path=args.model,
-        map_location="cpu"
-    )
-
-asr_model.eval()
-asr_model = asr_model.to(torch.device("cpu"))
-asr_model.cfg.decoding.strategy = "greedy"
+from asr_engine import ASREngine
+asr_engine = ASREngine.get_instance()
+asr_engine.load_model(model_path=args.model, verbose=args.verbose)
 
 # stop spinner
 spinner_event.set()
@@ -119,9 +109,8 @@ for i in range(0, len(audio), chunk_ms):
 all_text = []
 
 for idx, chunk_path in enumerate(tqdm(chunk_paths, desc="Transcribing", unit="chunk")):
-    with stdout_ctx, stderr_ctx:
-        result = asr_model.transcribe([chunk_path], batch_size=1)
-    all_text.append(result[0].text.strip())
+    result = asr_engine.transcribe([chunk_path])
+    all_text.append(result[0])
 
 # -----------------------------
 # CLEANUP TEMP FILES

@@ -12,3 +12,8 @@ dependencies:
       - nemo_asr
       - pydub
       - tqdm
+      - sounddevice
+      - flask
+      - flask-socketio
+      - python-dotenv
+      - requests
