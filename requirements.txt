@@ -6,5 +6,4 @@ requests==2.31.0
 numpy>=1.22.0
 pydub>=0.25.1
 tqdm>=4.65.0
-# pyannote.audio is optional for speaker diarization. 
-# You can install it separately: pip install pyannote.audio
+pyannote.audio>=3.1.1

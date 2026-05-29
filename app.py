@@ -23,6 +23,7 @@ mixer = MultiMicMixer()
 vad_detector = VoiceActivityDetector()
 nim_client = NIMClient()
 asr_engine = ASREngine.get_instance()
+diarizer = SpeakerDiarizer()
 
 # Live recording state
 recording_state = {
@@ -81,6 +82,7 @@ def live_transcription_loop():
                 classification = vad_detector.classify_speech_vs_noise(audio_chunk, Config.SAMPLE_RATE)
                 
                 text = ""
+                speaker = "Hablante 1"
                 if classification == "oratoria":
                     # Save temporary wav chunk for ASR
                     with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf:
@@ -106,15 +108,55 @@ def live_transcription_loop():
                             os.remove(temp_path)
                         except Exception:
                             pass
+                            
+                    # 3. Real-time speaker diarization on accumulated audio
+                    if not diarizer.fallback:
+                        try:
+                            accumulated_audio = mixer.get_audio_since(0)
+                            if len(accumulated_audio) > 0:
+                                with tempfile.NamedTemporaryFile(suffix=".wav", delete=False) as tf_acc:
+                                    acc_path = tf_acc.name
+                                try:
+                                    import wave
+                                    with wave.open(acc_path, 'wb') as w_acc:
+                                        w_acc.setnchannels(1)
+                                        w_acc.setsampwidth(2)
+                                        w_acc.setframerate(Config.SAMPLE_RATE)
+                                        int_data_acc = (accumulated_audio * 32767.0).astype(np.int16)
+                                        w_acc.writeframes(int_data_acc.tobytes())
+                                    
+                                    # Diarize accumulated audio
+                                    diar_segs = diarizer.diarize(acc_path)
+                                    
+                                    # Find dominant speaker in this chunk's time window
+                                    overlap_times = {}
+                                    for seg in diar_segs:
+                                        overlap_start = max(start_sec, seg['start'])
+                                        overlap_end = min(end_sec, seg['end'])
+                                        overlap = overlap_end - overlap_start
+                                        if overlap > 0:
+                                            overlap_times[seg['speaker']] = overlap_times.get(seg['speaker'], 0.0) + overlap
+                                    if overlap_times:
+                                        speaker = max(overlap_times, key=overlap_times.get)
+                                except Exception as e:
+                                    print(f"Error in live diarization: {e}")
+                                finally:
+                                    try:
+                                        os.remove(acc_path)
+                                    except Exception:
+                                        pass
+                        except Exception as e:
+                            print(f"Error fetching accumulated audio for live diarization: {e}")
                 else:
                     text = "[Ruido / Silencio]"
+                    speaker = "Ruido/Silencio"
                 
                 chunk_data = {
                     "start": start_sec,
                     "end": end_sec,
                     "text": text,
                     "classification": classification,
-                    "speaker": "Hablante 1" # Temp speaker during live streaming
+                    "speaker": speaker
                 }
                 
                 recording_state["chunks"].append(chunk_data)
@@ -189,7 +231,6 @@ def stop_rec():
     wav_path = mixer.stop_recording()
     
     # Post-processing: Speaker Diarization on the saved WAV file
-    diarizer = SpeakerDiarizer()
     diarization_segments = diarizer.diarize(wav_path)
     
     # Assign speakers
@@ -270,7 +311,9 @@ def handle_settings():
         if 'context_window' in data:
             Config.NIM_CONTEXT_WINDOW_TOKENS = int(data['context_window'])
         if 'hf_token' in data:
+            global diarizer
             Config.HF_TOKEN = data['hf_token']
+            diarizer = SpeakerDiarizer(hf_token=data['hf_token'])
         if 'output_dir' in data:
             Config.RECORDINGS_DIR = data['output_dir']
             
