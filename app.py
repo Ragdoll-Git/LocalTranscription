@@ -57,7 +57,7 @@ def live_transcription_loop():
     chunk_samples = Config.CHUNK_SECONDS * Config.SAMPLE_RATE
     
     while True:
-        time.sleep(1.0)
+        time.sleep(0.5)
         
         with processing_lock:
             if not recording_state["is_recording"]:
@@ -284,6 +284,9 @@ def handle_settings():
             set_key(env_path, "NIM_MODEL", Config.NIM_MODEL)
             set_key(env_path, "HF_TOKEN", Config.HF_TOKEN)
             set_key(env_path, "RECORDINGS_DIR", Config.RECORDINGS_DIR)
+            set_key(env_path, "NIM_TEMPERATURE", str(Config.NIM_TEMPERATURE))
+            set_key(env_path, "NIM_CONTEXT_WINDOW_TOKENS", str(Config.NIM_CONTEXT_WINDOW_TOKENS))
+            set_key(env_path, "NIM_MAX_RPM", str(Config.NIM_MAX_RPM))
         except Exception as e:
             print(f"Could not persist to .env: {e}")
             
