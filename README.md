@@ -1,147 +1,103 @@
-# LocalTranscription
+# LocalTranscription v2.0
 
-**Infrastructure for running local speech-to-text (STT) transcription using NVIDIA’s Parakeet TDT 0.6B (via NeMo).**
+**Infraestructura para transcripción local por voz en tiempo real con soporte multi-micrófono, clasificación por VAD, diarización de hablantes y asistente técnico de preguntas y respuestas mediante NVIDIA NIM.**
 
-This repository provides a simple, reliable pipeline for offline transcription of WAV audio using NVIDIA’s **Parakeet TDT 0.6B** model. It is optimized for **CPU-only environments** and designed to work consistently across common platforms (Windows, Linux, macOS).
-
-The core script, `transcribe_nemo.py`, handles audio preprocessing, chunking, and greedy decoding — all locally, with no cloud or API dependencies.
-
-Model homepage:
-[https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+Este proyecto ha sido mejorado para ofrecer un entorno interactivo y web que facilita la grabación de clases, conferencias o reuniones.
 
 ---
 
-## Features
+## Características principales
 
-* ✔️ Local transcription (no internet or API keys)
-* ✔️ CPU-only operation
-* ✔️ WAV audio → TXT and SRT subtitle output
-* ✔️ Chunked processing for long audio files
-* ✔️ High transcription accuracy (≈90%+ on clean speech)
-* ✔️ Simple CLI interface
-
-Typical performance on a modern desktop CPU (e.g., Intel i5): **~3× real-time**
-(10 minutes of audio transcribes in ~3–4 minutes).
+*   **Soporte Multi-Micrófono**: Selecciona de manera dinámica múltiples dispositivos de entrada (por ejemplo, micrófono interno de la computadora y micrófono de webcam) para sumarlos y normalizarlos en tiempo real.
+*   **Transcripción Local Ultrarrápida**: Utiliza el modelo local **NVIDIA Parakeet TDT 0.6B** en CPU.
+*   **VAD en Tiempo Real**: Clasificación automatizada de cada segundo de audio en habla estructurada (`oratoria`) o `ruido/silencio` utilizando **Silero VAD** (con fallback local).
+*   **Diarización en Vivo y Post-Procesamiento**: Identificación automatizada de hablantes (Hablante 1, 2, 3, etc.) tanto en vivo como al finalizar la grabación con **pyannote.audio**.
+*   **Inteligencia y Q&A con NVIDIA NIM**: Integración con las APIs de NVIDIA NIM para realizar preguntas técnicas avanzadas basadas en el contexto exacto de la oratoria. Ajustes de RPM (por defecto 30 RPM), temperatura y tamaño de la ventana de contexto modificables en tiempo real desde la web.
+*   **Panel de Control Web**: Interfaz oscura de alto contraste premium (estática, sin transiciones ni animaciones lentas) para un control completo de micrófonos, transcripción en vivo, guardado en carpetas personalizadas y chat.
 
 ---
 
-## Requirements
+## Requisitos previos
 
-* Conda (Miniconda or Anaconda)
-* Python **3.10**
-* ffmpeg (required by PyDub)
+*   Python **3.10**
+*   FFmpeg instalado en el sistema (requerido por `pydub` para el manejo de WAV).
+*   [Hugging Face Account & Token](https://huggingface.co/) (para poder descargar el modelo de diarización `pyannote/speaker-diarization-3.1`). Debes aceptar los términos del modelo en Hugging Face.
+*   [NVIDIA NIM API Key](https://build.nvidia.com/) (gratuita al registrarse, prefijo `nvapi-`).
 
 ---
 
-## Setup (Recommended)
+## Instalación y Configuración
 
-This project uses a **Conda environment file** to ensure consistent, cross-platform installs.
+### 1. Clonar el repositorio e instalar dependencias
 
-### 1️⃣ Create the environment
+Puedes usar **pip** o **conda** para configurar tu entorno:
 
-From the repository root:
-
+#### Opción A: Usando Pip (Recomendado)
 ```bash
-conda env create -f environment.yml
+pip install -r requirements.txt
 ```
 
-### 2️⃣ Activate the environment
-
+#### Opción B: Usando Conda
 ```bash
+conda env create -f environment.yml
 conda activate localtranscription
 ```
 
-All Python dependencies (PyTorch, NeMo, etc.) are installed automatically.
+### 2. Descargar el modelo ASR (Parakeet TDT)
+
+1.  Descarga el archivo del modelo desde Hugging Face:  
+    👉 [nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+2.  Descarga la versión `.nemo`: `parakeet-tdt-0.6b-v3.nemo`
+3.  Coloca el archivo `.nemo` en la raíz de este repositorio.
+
+### 3. Configurar variables de entorno
+
+Copia la plantilla de variables de entorno y renómbrala a `.env`:
+```bash
+cp .env.example .env
+```
+Edita `.env` con tus tokens y rutas preferidas:
+```env
+NIM_API_KEY=nvapi-tu-api-key-aqui
+HF_TOKEN=hf_tu-token-huggingface-aqui
+RECORDINGS_DIR=C:\ruta\de\guardado\grabaciones
+```
+*Nota: También puedes cambiar o ingresar estos valores directamente desde la página web en la sección de ajustes.*
 
 ---
 
-## Model Download (Required)
+## Cómo Ejecutar el Proyecto
 
-This repository does **not** include the Parakeet model due to size limitations.
+### 🌐 Interfaz Web Dashboard (Recomendado)
 
-1. Download the model from Hugging Face:
-   👉 [https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3](https://huggingface.co/nvidia/parakeet-tdt-0.6b-v3)
+Levanta el servidor Flask local:
+```bash
+python app.py
+```
+El servidor cargará el modelo local en segundo plano (puedes ver el estado de carga en la parte superior derecha de la web). 
 
-2. Download the file:
+Abre tu navegador en:
+👉 [http://127.0.0.1:5000](http://127.0.0.1:5000)
 
-   ```
-   parakeet-tdt-0.6b-v3.nemo
-   ```
-
-3. Place the `.nemo` file in the repository root directory.
-
-By default, `transcribe_nemo.py` looks for the model in the current working directory.
-A custom path may be provided with `--model`.
+**Flujo en la Web:**
+1.  **Selecciona tus micrófonos** en el listado lateral.
+2.  Configura la **Carpeta de Guardado** donde desees almacenar el archivo WAV final, el archivo SRT de subtítulos y el TXT con la transcripción.
+3.  Haz clic en **Iniciar Grabación**. La transcripción se mostrará cada 1 segundo en el área de texto identificando el hablante en tiempo real.
+4.  Usa el panel de **Análisis e Inteligencia** para formular preguntas técnicas a NVIDIA NIM sobre los temas expuestos por el orador.
+5.  Haz clic en **Detener** para consolidar el archivo de audio y generar los archivos finales `.txt` y `.srt` diarizados en tu carpeta especificada.
 
 ---
 
-## Usage
+### 💻 Uso mediante Consola (CLI original)
 
-Basic transcription:
+Si deseas realizar la transcripción offline de un archivo de audio WAV pre-grabado en formato SRT o TXT:
 
 ```bash
-python transcribe_nemo.py path/to/audio.wav
+python transcribe_nemo.py path/to/audio.wav --model parakeet-tdt-0.6b-v3.nemo --textformat both
 ```
 
-### Optional Flags
-
-```
---model MODEL_PATH        Path to the .nemo model file
---chunk-seconds N         Chunk length in seconds (default: 20)
---threads N               Number of CPU threads (default: 4)
---debug                   Keep intermediate WAV chunks
---textformat FORMAT       txt, srt, or both (default: srt)
---verbose                 Show detailed logs
-```
-
-Example:
-
-```bash
-python transcribe_nemo.py audio.wav \
-  --model parakeet-tdt-0.6b-v3.nemo \
-  --threads 6 \
-  --textformat both
-```
-
----
-
-## Output
-
-For an input file named `meeting.wav`:
-
-* `meeting_transcript.txt` — Plain text transcription
-* `meeting_transcript.srt` — Subtitle file with timestamps
-
-Files are written to the current working directory.
-
----
-
-## How It Works
-
-The transcription pipeline follows these steps:
-
-1. **Load the NeMo ASR model** from a local `.nemo` file
-2. **Normalize audio** to mono, 16 kHz WAV
-3. **Split long audio** into fixed-duration chunks
-4. **Transcribe each chunk** using greedy decoding
-5. **Aggregate results** and write TXT and/or SRT output
-
-All processing is performed locally on CPU.
-
----
-
-## Performance & Accuracy
-
-On typical desktop CPUs (e.g., Intel i5 class):
-
-* **Speed:** ~3× real-time
-* **Accuracy:** >90% on clean, conversational speech
-
-Results vary depending on audio quality, speaker clarity, and background noise.
-
----
-
-## License & Model Terms
-
-The transcription **infrastructure** in this repository is covered under its own license.
-The Parakeet TDT model is distributed under the terms specified on its Hugging Face page.
+#### Parámetros opcionales del CLI:
+*   `--model PATH`: Ruta al modelo `.nemo`.
+*   `--chunk-seconds N`: Duración en segundos de procesamiento (por defecto: 20).
+*   `--threads N`: Cantidad de hilos de CPU (por defecto: 4).
+*   `--textformat`: `txt`, `srt` o `both` (por defecto: `srt`).
