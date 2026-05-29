@@ -3,7 +3,7 @@ import time
 import threading
 import tempfile
 import numpy as np
-from flask import Flask, render_react_template, render_template, jsonify, request
+from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv, set_key
 
