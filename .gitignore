@@ -1,6 +1,9 @@
 # Environment files
 .env
 *.nemo
+.claude
+logs/
+recordings/
 
 # Python artifacts
 __pycache__/

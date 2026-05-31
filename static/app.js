@@ -92,7 +92,8 @@ async function loadMics() {
             checkbox.addEventListener('change', async (e) => {
                 const checked = e.target.checked;
                 const endpoint = checked ? '/api/mics/add' : '/api/mics/remove';
-                
+                console.log(`[mic] change fired: id=${mic.id} checked=${checked} -> ${endpoint}`);
+
                 try {
                     const res = await fetch(endpoint, {
                         method: 'POST',
@@ -101,8 +102,11 @@ async function loadMics() {
                     });
                     const resData = await res.json();
                     activeMics = resData.active;
+                    console.log(`[mic] server says active=${JSON.stringify(activeMics)} | checkbox.checked=${e.target.checked}`);
+                    // Force checkbox to match server truth (fixes "auto-uncheck" desyncs)
+                    e.target.checked = activeMics.includes(mic.id);
                 } catch (err) {
-                    console.error('Error modifying microphone selection:', err);
+                    console.error('[mic] error modifying selection:', err);
                     e.target.checked = !checked; // revert
                 }
             });

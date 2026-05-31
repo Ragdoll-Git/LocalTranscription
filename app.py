@@ -7,6 +7,9 @@ from flask import Flask, render_template, jsonify, request
 from flask_socketio import SocketIO, emit
 from dotenv import load_dotenv, set_key
 
+from logger_setup import setup_logging, get_logger
+logger = setup_logging()
+
 from config import Config
 from audio_engine import list_microphones, MultiMicMixer
 from asr_engine import ASREngine
@@ -40,14 +43,15 @@ processing_lock = threading.Lock()
 
 # Load ASR model in a background thread on startup
 def load_asr_background():
+    t0 = time.time()
     try:
-        print("Starting background ASR model load...")
-        asr_engine.load_model()
+        logger.info("Background ASR model load: starting")
+        asr_engine.load_model(verbose=False)
         recording_state["model_loaded"] = True
-        print("ASR Model loaded successfully in background.")
+        logger.info("Background ASR model load: success in %.1fs", time.time() - t0)
         socketio.emit('status_update', {'status': 'idle', 'model_loaded': True})
     except Exception as e:
-        print(f"Error loading ASR model: {e}")
+        logger.exception("Background ASR model load: FAILED after %.1fs", time.time() - t0)
         socketio.emit('status_update', {'status': 'error', 'message': f"Failed to load model: {str(e)}"})
 
 threading.Thread(target=load_asr_background, daemon=True).start()
@@ -101,7 +105,7 @@ def live_transcription_loop():
                         results = asr_engine.transcribe([temp_path])
                         text = results[0] if results else ""
                     except Exception as e:
-                        print(f"Error transcribing live chunk: {e}")
+                        logger.exception("Error transcribing live chunk [%s..%s]s", start_sec, end_sec)
                         text = "[Error de transcripción]"
                     finally:
                         try:
@@ -139,7 +143,7 @@ def live_transcription_loop():
                                     if overlap_times:
                                         speaker = max(overlap_times, key=overlap_times.get)
                                 except Exception as e:
-                                    print(f"Error in live diarization: {e}")
+                                    logger.exception("Error in live diarization")
                                 finally:
                                     try:
                                         os.remove(acc_path)
@@ -158,10 +162,10 @@ def live_transcription_loop():
                     "classification": classification,
                     "speaker": speaker
                 }
-                
+
                 recording_state["chunks"].append(chunk_data)
-                
-                # Emit live update to front-end
+                logger.info("chunk [%.1f-%.1fs] %s spk=%s text=%r",
+                            start_sec, end_sec, classification, speaker, text[:80])
                 socketio.emit('new_chunk', chunk_data)
 
 @app.route('/')
@@ -194,27 +198,34 @@ def remove_mic():
 @app.route('/api/recording/start', methods=['POST'])
 def start_rec():
     if not recording_state["model_loaded"]:
+        logger.warning("start_rec rejected: ASR model still loading")
         return jsonify({'status': 'error', 'message': 'ASR model is still loading. Please wait.'}), 400
-        
+
     data = request.json or {}
     output_dir = data.get('output_dir', Config.RECORDINGS_DIR)
     file_name = data.get('file_name', 'live_recording.wav')
-    
-    if not file_name.endswith('.wav'):
-        file_name += '.wav'
-        
+
+    # Strip extension, append timestamp, restore .wav
+    base = file_name[:-4] if file_name.lower().endswith('.wav') else file_name
+    stamp = time.strftime("%Y-%m-%d_%H-%M-%S")
+    file_name = f"{base}_{stamp}.wav"
+
     recording_state["output_dir"] = output_dir
     recording_state["file_name"] = file_name
     recording_state["chunks"] = []
     recording_state["last_processed_sample"] = 0
     recording_state["is_recording"] = True
-    
-    # Start mixer
-    mixer.start_recording(output_dir, file_name)
-    
-    # Start live transcription worker thread
+
+    logger.info("REC START: %s/%s mics=%d", output_dir, file_name, len(mixer.streams))
+    try:
+        mixer.start_recording(output_dir, file_name)
+    except Exception as e:
+        logger.exception("REC START failed")
+        recording_state["is_recording"] = False
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
     threading.Thread(target=live_transcription_loop, daemon=True).start()
-    
+
     return jsonify({
         'status': 'recording',
         'output_path': os.path.join(output_dir, file_name)
@@ -223,15 +234,17 @@ def start_rec():
 @app.route('/api/recording/stop', methods=['POST'])
 def stop_rec():
     if not recording_state["is_recording"]:
+        logger.warning("stop_rec called but not recording")
         return jsonify({'status': 'error', 'message': 'Not recording'}), 400
-        
+
+    logger.info("REC STOP: finalizing recording")
     recording_state["is_recording"] = False
-    
-    # Stop mixer and save final WAV
+
     wav_path = mixer.stop_recording()
-    
-    # Post-processing: Speaker Diarization on the saved WAV file
+    logger.info("REC STOP: WAV saved at %s, %d chunks captured", wav_path, len(recording_state["chunks"]))
+
     diarization_segments = diarizer.diarize(wav_path)
+    logger.info("REC STOP: diarization produced %d segments", len(diarization_segments))
     
     # Assign speakers
     final_chunks = assign_speakers_to_transcript_chunks(
@@ -374,4 +387,4 @@ def suggest_questions():
     return jsonify({'response': response})
 
 if __name__ == '__main__':
-    socketio.run(app, debug=True, host='127.0.0.1', port=5000)
+    socketio.run(app, debug=False, host='127.0.0.1', port=5000, allow_unsafe_werkzeug=True, use_reloader=False)

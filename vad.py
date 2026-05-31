@@ -1,17 +1,23 @@
+import logging
 import numpy as np
 import torch
 import warnings
 from config import Config
+
+try:
+    from logger_setup import get_logger
+    log = get_logger("vad")
+except Exception:
+    log = logging.getLogger("vad")
+
 
 class VoiceActivityDetector:
     def __init__(self):
         self.model = None
         self.utils = None
         self.fallback = False
-        
+
         try:
-            # Try to load Silero VAD
-            # Suppress download messages
             with warnings.catch_warnings():
                 warnings.simplefilter("ignore")
                 self.model, self.utils = torch.hub.load(
@@ -20,9 +26,9 @@ class VoiceActivityDetector:
                     force_reload=False,
                     trust_repo=True
                 )
-            print("Loaded Silero VAD model successfully.")
+            log.info("Silero VAD loaded")
         except Exception as e:
-            print(f"Silero VAD loading failed: {e}. Falling back to energy-based VAD.")
+            log.warning("Silero VAD failed (%s) — using energy-based fallback", e)
             self.fallback = True
 
     def is_speech_chunk(self, audio_data, sample_rate=16000, threshold=None):

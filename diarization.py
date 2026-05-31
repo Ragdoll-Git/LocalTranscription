@@ -1,35 +1,48 @@
 import os
+import logging
 import torch
 from config import Config
+
+try:
+    from logger_setup import get_logger
+    log = get_logger("diarization")
+except Exception:
+    log = logging.getLogger("diarization")
+
 
 class SpeakerDiarizer:
     def __init__(self, hf_token=None):
         self.hf_token = hf_token or Config.HF_TOKEN
         self.pipeline = None
         self.fallback = False
-        
+
         if not self.hf_token:
-            print("No Hugging Face token provided in config. Diarization will fall back to single-speaker mode.")
+            log.warning("No HF token — diarization falls back to single-speaker mode")
             self.fallback = True
             return
 
         try:
-            # Import dynamically to prevent crashes if pyannote is not installed
             from pyannote.audio import Pipeline
-            self.pipeline = Pipeline.from_pretrained(
-                "pyannote/speaker-diarization-3.1",
-                use_auth_token=self.hf_token
-            )
+            try:
+                self.pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    token=self.hf_token,
+                )
+            except TypeError:
+                # pyannote.audio < 4.x used use_auth_token
+                self.pipeline = Pipeline.from_pretrained(
+                    "pyannote/speaker-diarization-3.1",
+                    use_auth_token=self.hf_token,
+                )
             if self.pipeline is not None:
-                # Run on GPU if available, else CPU
                 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
                 self.pipeline.to(device)
-                print(f"Loaded pyannote speaker-diarization-3.1 model on {device}.")
+                log.info("pyannote speaker-diarization-3.1 loaded on %s", device)
             else:
-                print("Failed to load pretrained pyannote pipeline. Using single-speaker fallback.")
+                log.warning("pyannote pipeline returned None — using fallback")
                 self.fallback = True
         except Exception as e:
-            print(f"Failed to initialize pyannote.audio: {e}. Diarization will use fallback.")
+            log.warning("pyannote.audio init failed (%s) — using fallback", e)
             self.fallback = True
 
     def diarize(self, wav_path):

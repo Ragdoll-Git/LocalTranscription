@@ -3,53 +3,200 @@ import wave
 import time
 import queue
 import threading
+import logging
 import numpy as np
 import sounddevice as sd
 from config import Config
 
+try:
+    from logger_setup import get_logger
+    log = get_logger("audio")
+except Exception:
+    log = logging.getLogger("audio")
+
+_HOST_PRIORITY = {
+    # MME is the most permissive Windows API. Empirically the only one that opens
+    # reliably with callback-mode streams on this hardware.  Higher-fidelity hosts
+    # (WASAPI/DirectSound) intermittently return GLE 0x490 from WdmSyncIoctl even
+    # when the device is otherwise free.
+    "MME": 0,
+    "Windows DirectSound": 1,
+    "Windows WASAPI": 2,
+}
+
+# WDM-KS requires exclusive kernel access; almost always fails in shared setups.
+_SKIPPED_HOSTS = ("Windows WDM-KS",)
+
+_NON_MIC_KEYWORDS = (
+    "mapper",                       # Microsoft Sound Mapper
+    "primary sound capture",        # EN generic driver alias
+    "primary capture driver",
+    "controlador primario",         # ES Primary Sound Capture Driver
+    "controlador de captura",
+    "asignador de sonido",          # ES Sound Mapper
+    "stereo mix",                   # EN system-loopback (not a real mic)
+    "mezcla est",                   # ES Mezcla estereo / estéreo
+    "what u hear",                  # SoundBlaster loopback
+)
+
+
+def _is_real_mic(name):
+    lower = name.lower().strip()
+    if not lower:
+        return False
+    return not any(kw in lower for kw in _NON_MIC_KEYWORDS)
+
+
 def list_microphones():
     """
-    List all available input audio devices.
-    Returns a list of dicts with device info.
+    List input audio devices, deduplicated by name across host APIs.
+    Prefers WASAPI > WDM-KS > DirectSound > MME, drops virtual mappers.
     """
-    devices = sd.query_devices()
-    input_devices = []
+    try:
+        devices = sd.query_devices()
+        hostapis = sd.query_hostapis()
+    except Exception as e:
+        log.exception("list_microphones: sd.query_devices failed")
+        return []
+
+    candidates = []
     for idx, d in enumerate(devices):
-        if d['max_input_channels'] > 0:
-            input_devices.append({
-                'id': idx,
-                'name': d['name'],
-                'channels': d['max_input_channels'],
-                'default_sr': d['default_samplerate']
-            })
-    return input_devices
+        if d.get('max_input_channels', 0) <= 0:
+            continue
+        name = (d.get('name') or '').strip()
+        if not _is_real_mic(name):
+            continue
+        host_idx = d.get('hostapi', -1)
+        host_name = hostapis[host_idx]['name'] if 0 <= host_idx < len(hostapis) else ''
+        if host_name in _SKIPPED_HOSTS:
+            continue
+        candidates.append({
+            'id': idx,
+            'name': name,
+            'channels': d['max_input_channels'],
+            'default_sr': d.get('default_samplerate'),
+            'host': host_name,
+            '_prio': _HOST_PRIORITY.get(host_name, 99),
+        })
+
+    # Group by prefix-equivalence: MME truncates names to ~30 chars while
+    # WASAPI/DirectSound keep the full name. Two devices belong to the same
+    # physical mic if the shorter name is a prefix of the longer one.
+    groups = []
+    for c in candidates:
+        cname = c['name'].lower()
+        matched = None
+        for g in groups:
+            gname = g['_display_name'].lower()
+            short, long = (cname, gname) if len(cname) <= len(gname) else (gname, cname)
+            if long.startswith(short):
+                matched = g
+                break
+        if matched is None:
+            groups.append({**c, '_display_name': c['name'], '_members': [c]})
+        else:
+            matched['_members'].append(c)
+            if len(c['name']) > len(matched['_display_name']):
+                matched['_display_name'] = c['name']
+            if c['_prio'] < matched['_prio']:
+                # Promote: take this candidate's id+host (better access), keep long name
+                matched['id'] = c['id']
+                matched['host'] = c['host']
+                matched['_prio'] = c['_prio']
+                matched['channels'] = c['channels']
+                matched['default_sr'] = c['default_sr']
+
+    result = []
+    for g in groups:
+        result.append({
+            'id': g['id'],
+            'name': g['_display_name'],
+            'channels': g['channels'],
+            'default_sr': g['default_sr'],
+            'host': g['host'],
+        })
+    result.sort(key=lambda x: x['name'].lower())
+    log.debug("list_microphones: %d raw -> %d after sanitization", len(candidates), len(result))
+    return result
 
 class MicrophoneStream:
     def __init__(self, device_id, sample_rate=16000, block_size=1024):
         self.device_id = device_id
-        self.sample_rate = sample_rate
+        self.sample_rate = sample_rate        # target rate (16k for ASR)
         self.block_size = block_size
         self.queue = queue.Queue()
         self.stream = None
         self.active = False
+        self.actual_rate = sample_rate        # set by start()
 
     def callback(self, indata, frames, time_info, status):
         if status:
-            pass # print(f"Device {self.device_id} status: {status}", flush=True)
-        # Put a copy of the input data into the queue
-        self.queue.put(indata.copy())
+            pass
+        # Resample to target rate only when the device couldn't open at 16k
+        if self.actual_rate != self.sample_rate:
+            try:
+                from scipy.signal import resample_poly
+                mono = indata[:, 0] if indata.ndim > 1 else indata
+                out = resample_poly(mono, up=self.sample_rate, down=self.actual_rate)
+                out = out.astype(np.float32).reshape(-1, 1)
+                self.queue.put(out)
+            except Exception:
+                # If scipy isn't available, just push raw — better than nothing
+                self.queue.put(indata.copy())
+        else:
+            self.queue.put(indata.copy())
 
     def start(self):
+        """
+        Opens the device. Strategy:
+          1) Query the device's default sample rate (what WASAPI/Windows actually expects).
+          2) Try opening at that rate without any extra_settings — this is what worked
+             in our standalone diagnostic for all WASAPI/DirectSound mics.
+          3) If we got something other than 16 kHz, resample in the callback.
+        Hand-set blocksize=0 lets PortAudio pick a safe value (avoids huge buffers).
+        """
         self.active = True
-        self.stream = sd.InputStream(
-            device=self.device_id,
-            channels=1,
-            samplerate=self.sample_rate,
-            blocksize=self.block_size,
-            callback=self.callback,
-            dtype='float32'
+
+        info = sd.query_devices(self.device_id)
+        default_rate = int(round(info.get('default_samplerate') or 48000))
+
+        # Build the ordered list of rates to try
+        candidates = []
+        if default_rate not in candidates:
+            candidates.append(default_rate)
+        for r in (48000, 44100, 32000, 16000):
+            if r not in candidates:
+                candidates.append(r)
+
+        last_err = None
+        for rate in candidates:
+            try:
+                # Mirror exactly what worked in the standalone diagnostic:
+                # no blocksize, no extra_settings.
+                self.stream = sd.InputStream(
+                    device=self.device_id,
+                    channels=1,
+                    samplerate=rate,
+                    callback=self.callback,
+                    dtype='float32',
+                )
+                self.actual_rate = rate
+                self.stream.start()
+                if rate == self.sample_rate:
+                    log.info("MicrophoneStream %s started @ %d Hz", self.device_id, rate)
+                else:
+                    log.info("MicrophoneStream %s started @ %d Hz (resample -> %d)",
+                             self.device_id, rate, self.sample_rate)
+                return
+            except Exception as e:
+                last_err = e
+                self.stream = None
+                log.warning("Mic %s: rate %d failed (%s)", self.device_id, rate, e)
+
+        # All rates failed — give up loudly
+        raise RuntimeError(
+            f"Mic {self.device_id}: ningún sample rate funcionó. Último error: {last_err}"
         )
-        self.stream.start()
 
     def stop(self):
         self.active = False
@@ -83,11 +230,13 @@ class MultiMicMixer:
     def add_microphone(self, device_id):
         with self.lock:
             if device_id in self.streams:
+                log.debug("add_microphone: %s already added", device_id)
                 return
             stream = MicrophoneStream(device_id, self.sample_rate, self.block_size)
             self.streams[device_id] = stream
             if self.is_recording:
                 stream.start()
+            log.info("add_microphone: device %s added (total=%d)", device_id, len(self.streams))
 
     def remove_microphone(self, device_id):
         with self.lock:
@@ -95,53 +244,79 @@ class MultiMicMixer:
                 stream = self.streams[device_id]
                 stream.stop()
                 del self.streams[device_id]
+                log.info("remove_microphone: device %s removed (remaining=%d)", device_id, len(self.streams))
 
     def start_recording(self, output_dir, file_name="live_recording.wav"):
         with self.lock:
             if self.is_recording:
+                log.warning("start_recording called but already recording")
                 return
-            
-            # Create directory if it doesn't exist
+
             os.makedirs(output_dir, exist_ok=True)
             self.output_path = os.path.join(output_dir, file_name)
-            
-            # Setup wave file
+            log.info("start_recording: %s with %d mic(s)", self.output_path, len(self.streams))
+
             self.wave_file = wave.open(self.output_path, 'wb')
             self.wave_file.setnchannels(1)
-            self.wave_file.setsampwidth(2) # 16-bit PCM
+            self.wave_file.setsampwidth(2)
             self.wave_file.setframerate(self.sample_rate)
-            
+
             self.recording_buffer = []
+
+            # Try to start each stream; if ALL fail, roll back cleanly so the caller
+            # can retry and the UI isn't stuck thinking we're recording.
+            started = []
+            for dev_id, stream in self.streams.items():
+                try:
+                    stream.start()
+                    started.append(dev_id)
+                except Exception as e:
+                    log.error("Mic %s failed to start: %s", dev_id, e)
+
+            if not started:
+                # Roll back: close wav, reset state, raise so endpoint can return 500
+                try:
+                    self.wave_file.close()
+                except Exception:
+                    pass
+                self.wave_file = None
+                try:
+                    os.remove(self.output_path)
+                except Exception:
+                    pass
+                self.output_path = None
+                self.is_recording = False
+                raise RuntimeError(
+                    "Ningun microfono pudo abrirse. Verificá permisos de Windows "
+                    "(Configuración → Privacidad → Micrófono) y que no esté en uso por otra app."
+                )
+
             self.is_recording = True
-            
-            # Start all streams
-            for stream in self.streams.values():
-                stream.start()
-                
-            # Start mixing thread
             self.mix_thread = threading.Thread(target=self._mix_loop, daemon=True)
             self.mix_thread.start()
 
     def stop_recording(self):
         with self.lock:
             if not self.is_recording:
+                log.warning("stop_recording called but not recording")
                 return None
-            
             self.is_recording = False
-            
+
         if self.mix_thread:
             self.mix_thread.join()
-            
+
         with self.lock:
             for stream in self.streams.values():
                 stream.stop()
-                
+
             if self.wave_file:
                 self.wave_file.close()
                 self.wave_file = None
-                
+
             path = self.output_path
             self.output_path = None
+            samples = sum(len(c) for c in self.recording_buffer)
+            log.info("stop_recording: wrote %s (%.1fs of audio)", path, samples / self.sample_rate)
             return path
 
     def _mix_loop(self):

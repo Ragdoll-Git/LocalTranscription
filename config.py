@@ -8,7 +8,10 @@ class Config:
     # ASR model settings
     ASR_MODEL_PATH = os.environ.get("ASR_MODEL_PATH", "parakeet-tdt-0.6b-v3.nemo")
     SAMPLE_RATE = 16000
-    CHUNK_SECONDS = 1  # Process in 1-second chunks for fast real-time updates every 1 second
+    # Parakeet-TDT performs much better with enough context to span full phrases.
+    # 1s chunks cut mid-word; 5-8s preserves meaning at the cost of slightly later
+    # appearance in the UI. Overridable via env CHUNK_SECONDS.
+    CHUNK_SECONDS = int(os.environ.get("CHUNK_SECONDS", "6"))
     CPU_THREADS = int(os.environ.get("CPU_THREADS", "4"))
     
     # VAD settings
